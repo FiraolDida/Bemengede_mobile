@@ -21,6 +21,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
+import android.widget.AdapterView;
 import android.widget.AutoCompleteTextView;
 import android.widget.ImageView;
 
@@ -28,14 +29,20 @@ import android.widget.RelativeLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.android.volley.Request;
+import com.android.volley.Response;
+import com.android.volley.VolleyError;
+import com.android.volley.toolbox.JsonArrayRequest;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.common.api.GoogleApiClient.OnConnectionFailedListener;
 import com.google.android.gms.common.api.Status;
 import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.location.places.AutocompletePrediction;
 import com.google.android.gms.location.places.GeoDataClient;
 import com.google.android.gms.location.places.Place;
+import com.google.android.gms.location.places.PlaceBufferResponse;
 import com.google.android.gms.location.places.Places;
 import com.google.android.gms.location.places.ui.PlaceAutocompleteFragment;
 import com.google.android.gms.location.places.ui.PlaceSelectionListener;
@@ -50,6 +57,10 @@ import com.google.android.gms.maps.model.MarkerOptions;
 import com.google.android.gms.tasks.OnCompleteListener;
 import com.google.android.gms.tasks.Task;
 
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -59,6 +70,7 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
 
     private GoogleMap mMap;
     private static final String TAG = "MapsActivity";
+    private static final String URL = "http://290ce69c.ngrok.io/stations";
     private static final String FINE_LOCATION = Manifest.permission.ACCESS_FINE_LOCATION;
     private static final String COARSE_LOCATION = Manifest.permission.ACCESS_COARSE_LOCATION;
     private static final int LOCATION_PERMISSION_REQUEST_CODE = 1234;
@@ -77,6 +89,12 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
     private PlaceAutocompleteAdapter placeAutocompleteAdapter;
     private GoogleApiClient googleApiClient;
     private View mapView;
+
+    private Station station;
+    ArrayList<Station> arrayList;
+
+    //for test
+    protected GeoDataClient mGeoDataClient;
 
     @RequiresApi(api = Build.VERSION_CODES.P)
     @Override
@@ -98,6 +116,11 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         relativeLayout = findViewById(R.id.relativeLayout);
         bottomNavigationView = findViewById(R.id.navigation);
 
+        arrayList = new ArrayList<>();
+
+        //for test
+        mGeoDataClient = Places.getGeoDataClient(this,null);
+        searchText.setOnItemClickListener(mAutocompleteClickListener);
     }
 
 
@@ -155,24 +178,24 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                 .enableAutoManage(this, this)
                 .build();
 
-        placeAutocompleteAdapter = new PlaceAutocompleteAdapter(this, googleApiClient,
+        placeAutocompleteAdapter = new PlaceAutocompleteAdapter(this, mGeoDataClient,
                 LAT_LNG_BOUNDS, null);
         searchText.setAdapter(placeAutocompleteAdapter);
 
-        searchText.setOnEditorActionListener(new TextView.OnEditorActionListener() {
-            @Override
-            public boolean onEditorAction(TextView v, int actionId, KeyEvent event) {
-                if (actionId == EditorInfo.IME_ACTION_SEARCH
-                    || actionId == EditorInfo.IME_ACTION_DONE
-                    || event.getAction() == KeyEvent.ACTION_DOWN
-                    || event.getAction() == KeyEvent.KEYCODE_ENTER){
-
-                    //execute function for searching
-                    geoLocate();
-                }
-                return false;
-            }
-        });
+//        searchText.setOnEditorActionListener(new TextView.OnEditorActionListener() {
+//            @Override
+//            public boolean onEditorAction(TextView v, int actionId, KeyEvent event) {
+//                if (actionId == EditorInfo.IME_ACTION_SEARCH
+//                    || actionId == EditorInfo.IME_ACTION_DONE
+//                    || event.getAction() == KeyEvent.ACTION_DOWN
+//                    || event.getAction() == KeyEvent.KEYCODE_ENTER){
+//
+//                    //execute function for searching
+//                    geoLocate();
+//                }
+//                return false;
+//            }
+//        });
 
         findMyLocation.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -189,9 +212,37 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                 bottomNavigationView.setVisibility(View.VISIBLE);
             }
         });
-
+        locateStations();
         hideSoftKeyboard();
     }
+
+    private AdapterView.OnItemClickListener mAutocompleteClickListener
+            = new AdapterView.OnItemClickListener() {
+        @Override
+        public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+            /*
+             Retrieve the place ID of the selected item from the Adapter.
+             The adapter stores each Place suggestion in a AutocompletePrediction from which we
+             read the place ID and title.
+              */
+            final AutocompletePrediction item = placeAutocompleteAdapter.getItem(position);
+            final String placeId = item.getPlaceId();
+            final CharSequence primaryText = item.getPrimaryText(null);
+
+            Log.i(TAG, "Autocomplete item selected: " + primaryText);
+
+            /*
+             Issue a request to the Places Geo Data Client to retrieve a Place object with
+             additional details about the place.
+              */
+            Task<PlaceBufferResponse> placeResult = mGeoDataClient.getPlaceById(placeId);
+//            placeResult.addOnCompleteListener(mUpdatePlaceDetailsCallback);
+
+            Toast.makeText(getApplicationContext(), "Clicked: " + primaryText,
+                    Toast.LENGTH_SHORT).show();
+            Log.i(TAG, "Called getPlaceById to get Place details for " + placeId);
+        }
+    };
 
     private void geoLocate() {
         Log.d(TAG, "geoLocate: geolocating");
@@ -296,6 +347,39 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                 }
             }
         }
+    }
+
+    private void locateStations(){
+        JsonArrayRequest jsonArrayRequest = new JsonArrayRequest(Request.Method.GET, URL, null, new Response.Listener<JSONArray>() {
+            @Override
+            public void onResponse(JSONArray response) {
+                int count = 0;
+                while (count < response.length()){
+                    try {
+                        JSONObject object = response.getJSONObject(count);
+                        station = new Station(object.getString("name"), object.getDouble("latitude"), object.getDouble("longitude"));
+                        arrayList.add(station);
+                        createMarker(station.getName(), station.getLatitude(),station.getLongitude());
+                        count++;
+                    } catch (JSONException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+        }, new Response.ErrorListener() {
+            @Override
+            public void onErrorResponse(VolleyError error) {
+                Toast.makeText(MapsActivity.this, "Error fetching JSON", Toast.LENGTH_SHORT).show();
+                error.printStackTrace();
+            }
+        });
+        JSONRequestHelper.getInstance(getApplicationContext()).addToRequest(jsonArrayRequest);
+    }
+
+    public void createMarker(String name, double latitude, double longitude){
+        mMap.addMarker(new MarkerOptions()
+            .position(new LatLng(latitude, longitude))
+            .title(name));
     }
 
     private void hideSoftKeyboard() {
